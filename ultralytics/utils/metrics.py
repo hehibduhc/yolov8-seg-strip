@@ -1202,8 +1202,12 @@ class SegmentMetrics(DetMetrics):
         """
         DetMetrics.__init__(self, names)
         self.seg = Metric()
+        self.dice = 0.0
+        self.miou = 0.0
         self.task = "segment"
         self.stats["tp_m"] = []  # add additional stats for masks
+        self.stats["dice"] = []  # per-instance dice scores
+        self.stats["miou"] = []  # per-instance mask IoU scores
 
     def process(self, save_dir: Path = Path("."), plot: bool = False, on_plot=None) -> dict[str, np.ndarray]:
         """Process the detection and segmentation metrics over the given set of predictions.
@@ -1216,7 +1220,11 @@ class SegmentMetrics(DetMetrics):
         Returns:
             (dict[str, np.ndarray]): Dictionary containing concatenated statistics arrays.
         """
+        dice_stats = self.stats.pop("dice", [])
+        miou_stats = self.stats.pop("miou", [])
         stats = DetMetrics.process(self, save_dir, plot, on_plot=on_plot)  # process box stats
+        self.stats["dice"] = dice_stats
+        self.stats["miou"] = miou_stats
         results_mask = ap_per_class(
             stats["tp_m"],
             stats["conf"],
@@ -1230,6 +1238,16 @@ class SegmentMetrics(DetMetrics):
         )[2:]
         self.seg.nc = len(self.names)
         self.seg.update(results_mask)
+        if len(dice_stats):
+            dice = np.concatenate([np.atleast_1d(d) for d in dice_stats], 0)
+            self.dice = float(dice.mean()) if dice.size else 0.0
+        else:
+            self.dice = 0.0
+        if len(miou_stats):
+            miou = np.concatenate([np.atleast_1d(m) for m in miou_stats], 0)
+            self.miou = float(miou.mean()) if miou.size else 0.0
+        else:
+            self.miou = 0.0
         return stats
 
     @property
@@ -1241,11 +1259,13 @@ class SegmentMetrics(DetMetrics):
             "metrics/recall(M)",
             "metrics/mAP50(M)",
             "metrics/mAP50-95(M)",
+            "metrics/mIoU(M)",
+            "metrics/Dice",
         ]
 
     def mean_results(self) -> list[float]:
         """Return the mean metrics for bounding box and segmentation results."""
-        return DetMetrics.mean_results(self) + self.seg.mean_results()
+        return DetMetrics.mean_results(self) + self.seg.mean_results() + [self.miou, self.dice]
 
     def class_result(self, i: int) -> list[float]:
         """Return classification results for a specified class index."""
