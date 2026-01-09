@@ -84,6 +84,16 @@ class FocalLoss(nn.Module):
         return loss.mean(1).sum()
 
 
+def soft_dice_loss(pred_logits: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """Compute soft Dice loss from logits and binary targets."""
+    pred = pred_logits.sigmoid()
+    dims = tuple(range(1, pred.ndim))
+    intersection = (pred * target).sum(dims)
+    union = pred.sum(dims) + target.sum(dims)
+    dice = (2 * intersection + eps) / (union + eps)
+    return 1 - dice.mean()
+
+
 class DFLoss(nn.Module):
     """Criterion class for computing Distribution Focal Loss (DFL)."""
 
@@ -309,6 +319,7 @@ class v8SegmentationLoss(v8DetectionLoss):
         """Initialize the v8SegmentationLoss class with model parameters and mask overlap setting."""
         super().__init__(model)
         self.overlap = model.args.overlap_mask
+        self.lambda_dice = getattr(model.args, "lambda_dice", 0.0)
 
     def __call__(self, preds: Any, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate and return the combined loss for detection and segmentation."""
@@ -393,10 +404,9 @@ class v8SegmentationLoss(v8DetectionLoss):
 
         return loss * batch_size, loss.detach()  # loss(box, seg, cls, dfl)
 
-    @staticmethod
     def single_mask_loss(
-        gt_mask: torch.Tensor, pred: torch.Tensor, proto: torch.Tensor, xyxy: torch.Tensor, area: torch.Tensor
-    ) -> torch.Tensor:
+        self, gt_mask: torch.Tensor, pred: torch.Tensor, proto: torch.Tensor, xyxy: torch.Tensor, area: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute the instance segmentation loss for a single image.
 
         Args:
@@ -407,7 +417,7 @@ class v8SegmentationLoss(v8DetectionLoss):
             area (torch.Tensor): Area of each ground truth bounding box of shape (N,).
 
         Returns:
-            (torch.Tensor): The calculated mask loss for a single image.
+            (tuple[torch.Tensor, torch.Tensor]): The calculated BCE and Dice losses for a single image.
 
         Notes:
             The function uses the equation pred_mask = torch.einsum('in,nhw->ihw', pred, proto) to produce the
@@ -415,7 +425,14 @@ class v8SegmentationLoss(v8DetectionLoss):
         """
         pred_mask = torch.einsum("in,nhw->ihw", pred, proto)  # (n, 32) @ (32, 80, 80) -> (n, 80, 80)
         loss = F.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
-        return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).sum()
+        loss_bce = (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).sum()
+        if self.lambda_dice > 0:
+            pred_crop = crop_mask(pred_mask, xyxy)
+            gt_crop = crop_mask(gt_mask.float(), xyxy)
+            loss_dice = soft_dice_loss(pred_crop, gt_crop) * pred_crop.shape[0]
+        else:
+            loss_dice = torch.tensor(0.0, device=pred_mask.device)
+        return loss_bce, loss_dice
 
     def calculate_segmentation_loss(
         self,
@@ -451,7 +468,8 @@ class v8SegmentationLoss(v8DetectionLoss):
                 pred_mask = torch.einsum('in,nhw->ihw', pred, proto)  # (i, 32) @ (32, 160, 160) -> (i, 160, 160)
         """
         _, _, mask_h, mask_w = proto.shape
-        loss = 0
+        loss = torch.tensor(0.0, device=proto.device)
+        loss_dice = torch.tensor(0.0, device=proto.device)
 
         # Normalize to 0-1
         target_bboxes_normalized = target_bboxes / imgsz[[1, 0, 1, 0]]
@@ -472,15 +490,20 @@ class v8SegmentationLoss(v8DetectionLoss):
                 else:
                     gt_mask = masks[batch_idx.view(-1) == i][mask_idx]
 
-                loss += self.single_mask_loss(
+                loss_bce, loss_dice_i = self.single_mask_loss(
                     gt_mask, pred_masks_i[fg_mask_i], proto_i, mxyxy_i[fg_mask_i], marea_i[fg_mask_i]
                 )
+                loss += loss_bce
+                loss_dice += loss_dice_i
 
             # WARNING: lines below prevents Multi-GPU DDP 'unused gradient' PyTorch errors, do not remove
             else:
                 loss += (proto * 0).sum() + (pred_masks * 0).sum()  # inf sums may lead to nan loss
 
-        return loss / fg_mask.sum()
+        loss = loss / fg_mask.sum()
+        if self.lambda_dice > 0:
+            loss = loss + self.lambda_dice * (loss_dice / fg_mask.sum())
+        return loss
 
 
 class v8PoseLoss(v8DetectionLoss):

@@ -242,17 +242,27 @@ class Segment(Detect):
             npr (int): Number of protos.
             ch (tuple): Tuple of channel sizes from backbone feature maps.
         """
-        super().__init__(nc, ch)
+        if len(ch) > 3:
+            proto_ch, detect_ch = ch[0], ch[1:]
+        else:
+            proto_ch, detect_ch = ch[0], ch
+        super().__init__(nc, detect_ch)
         self.nm = nm  # number of masks
         self.npr = npr  # number of protos
-        self.proto = Proto(ch[0], self.npr, self.nm)  # protos
+        self.proto = Proto(proto_ch, self.npr, self.nm)  # protos
 
-        c4 = max(ch[0] // 4, self.nm)
-        self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nm, 1)) for x in ch)
+        c4 = max(detect_ch[0] // 4, self.nm)
+        self.cv4 = nn.ModuleList(
+            nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nm, 1)) for x in detect_ch
+        )
 
     def forward(self, x: list[torch.Tensor]) -> tuple | list[torch.Tensor]:
         """Return model outputs and mask coefficients if training, otherwise return outputs and mask coefficients."""
-        p = self.proto(x[0])  # mask protos
+        if len(x) == self.nl + 1:
+            proto_in, x = x[0], x[1:]
+        else:
+            proto_in = x[0]
+        p = self.proto(proto_in)  # mask protos
         bs = p.shape[0]  # batch size
 
         mc = torch.cat([self.cv4[i](x[i]).view(bs, self.nm, -1) for i in range(self.nl)], 2)  # mask coefficients

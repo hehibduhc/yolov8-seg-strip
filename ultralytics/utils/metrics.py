@@ -1202,8 +1202,10 @@ class SegmentMetrics(DetMetrics):
         """
         DetMetrics.__init__(self, names)
         self.seg = Metric()
+        self.dice = 0.0
         self.task = "segment"
         self.stats["tp_m"] = []  # add additional stats for masks
+        self.stats["dice"] = []  # per-instance dice scores
 
     def process(self, save_dir: Path = Path("."), plot: bool = False, on_plot=None) -> dict[str, np.ndarray]:
         """Process the detection and segmentation metrics over the given set of predictions.
@@ -1230,6 +1232,11 @@ class SegmentMetrics(DetMetrics):
         )[2:]
         self.seg.nc = len(self.names)
         self.seg.update(results_mask)
+        if len(stats.get("dice", [])):
+            dice = np.concatenate(stats["dice"], 0)
+            self.dice = float(dice.mean()) if dice.size else 0.0
+        else:
+            self.dice = 0.0
         return stats
 
     @property
@@ -1241,11 +1248,12 @@ class SegmentMetrics(DetMetrics):
             "metrics/recall(M)",
             "metrics/mAP50(M)",
             "metrics/mAP50-95(M)",
+            "metrics/Dice",
         ]
 
     def mean_results(self) -> list[float]:
         """Return the mean metrics for bounding box and segmentation results."""
-        return DetMetrics.mean_results(self) + self.seg.mean_results()
+        return DetMetrics.mean_results(self) + self.seg.mean_results() + [self.dice]
 
     def class_result(self, i: int) -> list[float]:
         """Return classification results for a specified class index."""
