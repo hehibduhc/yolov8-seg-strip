@@ -1218,7 +1218,9 @@ class SegmentMetrics(DetMetrics):
         Returns:
             (dict[str, np.ndarray]): Dictionary containing concatenated statistics arrays.
         """
+        dice_stats = self.stats.pop("dice", [])
         stats = DetMetrics.process(self, save_dir, plot, on_plot=on_plot)  # process box stats
+        self.stats["dice"] = dice_stats
         results_mask = ap_per_class(
             stats["tp_m"],
             stats["conf"],
@@ -1232,8 +1234,8 @@ class SegmentMetrics(DetMetrics):
         )[2:]
         self.seg.nc = len(self.names)
         self.seg.update(results_mask)
-        if len(stats.get("dice", [])):
-            dice = np.concatenate(stats["dice"], 0)
+        if len(dice_stats):
+            dice = np.concatenate([np.atleast_1d(d) for d in dice_stats], 0)
             self.dice = float(dice.mean()) if dice.size else 0.0
         else:
             self.dice = 0.0
