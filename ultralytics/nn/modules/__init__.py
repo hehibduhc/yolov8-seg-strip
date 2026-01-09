@@ -76,6 +76,7 @@ from .conv import (
     RepConv,
     SpatialAttention,
 )
+from .crack_modules import CrackEnhanceBlock, CVF2D, DilatedContextBlock, SSF2D, StripPooling2D
 from .head import (
     OBB,
     Classify,
@@ -171,6 +172,11 @@ __all__ = (
     "SCDown",
     "Segment",
     "SpatialAttention",
+    "CrackEnhanceBlock",
+    "CVF2D",
+    "DilatedContextBlock",
+    "SSF2D",
+    "StripPooling2D",
     "TorchVision",
     "TransformerBlock",
     "TransformerEncoderLayer",

@@ -43,7 +43,10 @@ from ultralytics.nn.modules import (
     Conv,
     Conv2,
     ConvTranspose,
+    CrackEnhanceBlock,
+    CVF2D,
     Detect,
+    DilatedContextBlock,
     DWConv,
     DWConvTranspose2d,
     Focus,
@@ -63,6 +66,8 @@ from ultralytics.nn.modules import (
     RTDETRDecoder,
     SCDown,
     Segment,
+    SSF2D,
+    StripPooling2D,
     TorchVision,
     WorldDetect,
     YOLOEDetect,
@@ -1555,6 +1560,8 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
         }
     )
+    crack_single_modules = frozenset({CrackEnhanceBlock, DilatedContextBlock, StripPooling2D})
+    crack_fuse_modules = frozenset({SSF2D, CVF2D})
     repeat_modules = frozenset(  # modules with 'repeat' arguments
         {
             BottleneckCSP,
@@ -1587,7 +1594,24 @@ def parse_model(d, ch, verbose=True):
                 with contextlib.suppress(ValueError):
                     args[j] = locals()[a] if a in locals() else ast.literal_eval(a)
         n = n_ = max(round(n * depth), 1) if n > 1 else n  # depth gain
-        if m in base_modules:
+        if m in crack_single_modules:
+            c1 = ch[f]
+            if args and isinstance(args[0], int):
+                c2 = args[0]
+                args = [c1, c2, *args[1:]]
+            else:
+                c2 = c1
+                args = [c1, None, *args] if args else [c1]
+        elif m in crack_fuse_modules:
+            if not isinstance(f, list) or len(f) < 2:
+                raise ValueError(f"{m.__name__} expects a list of two input indices")
+            if m is SSF2D:
+                args = [ch[f[0]], ch[f[1]]]
+                c2 = ch[f[0]]
+            else:
+                args = [ch[f[0]], ch[f[1]]]
+                c2 = ch[f[0]]
+        elif m in base_modules:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # if c2 not equal to number of classes (i.e. for Classify() output)
                 c2 = make_divisible(min(c2, max_channels) * width, 8)

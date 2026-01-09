@@ -165,11 +165,42 @@ class SegmentationValidator(DetectionValidator):
         gt_cls = batch["cls"]
         if gt_cls.shape[0] == 0 or preds["cls"].shape[0] == 0:
             tp_m = np.zeros((preds["cls"].shape[0], self.niou), dtype=bool)
+            dice = np.zeros((0,), dtype=np.float32)
         else:
             iou = mask_iou(batch["masks"].flatten(1), preds["masks"].flatten(1).float())  # float, uint8
             tp_m = self.match_predictions(preds["cls"], gt_cls, iou).cpu().numpy()
-        tp.update({"tp_m": tp_m})  # update tp with mask IoU
+            dice = self._mask_dice(iou, preds["masks"], batch["masks"], preds["cls"], gt_cls)
+        tp.update({"tp_m": tp_m, "dice": dice})  # update tp with mask IoU and Dice
         return tp
+
+    def _mask_dice(
+        self,
+        iou: torch.Tensor,
+        pred_masks: torch.Tensor,
+        gt_masks: torch.Tensor,
+        pred_cls: torch.Tensor,
+        gt_cls: torch.Tensor,
+        eps: float = 1e-7,
+    ) -> np.ndarray:
+        """Compute Dice scores for matched masks at IoU=0.5."""
+        correct_class = gt_cls[:, None] == pred_cls
+        iou = (iou * correct_class).cpu().numpy()
+        matches = np.nonzero(iou >= float(self.iouv[0]))
+        matches = np.array(matches).T
+        if matches.shape[0] == 0:
+            return np.zeros((0,), dtype=np.float32)
+        if matches.shape[0] > 1:
+            matches = matches[iou[matches[:, 0], matches[:, 1]].argsort()[::-1]]
+            matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+            matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+        gt_idx = torch.from_numpy(matches[:, 0]).long().to(pred_masks.device)
+        pred_idx = torch.from_numpy(matches[:, 1]).long().to(pred_masks.device)
+        pred = pred_masks[pred_idx].float()
+        gt = gt_masks[gt_idx].float()
+        intersection = (pred * gt).sum(dim=(1, 2))
+        union = pred.sum(dim=(1, 2)) + gt.sum(dim=(1, 2))
+        dice = (2 * intersection + eps) / (union + eps)
+        return dice.detach().cpu().numpy()
 
     def plot_predictions(self, batch: dict[str, Any], preds: list[dict[str, torch.Tensor]], ni: int) -> None:
         """Plot batch predictions with masks and bounding boxes.
