@@ -130,7 +130,9 @@ class CVF2D(nn.Module):
 class CrackEnhanceBlock(nn.Module):
     """Wrapper block to apply optional dilated context and strip pooling."""
 
-    def __init__(self, c1: int, c2: int | None = None, use_dilated: bool = True, use_strip: bool = True, e: float = 0.5):
+    def __init__(
+        self, c1: int, c2: int | None = None, use_dilated: bool = True, use_strip: bool = True, e: float = 0.5
+    ):
         super().__init__()
         c2 = c1 if c2 is None else c2
         self.c1 = c1
