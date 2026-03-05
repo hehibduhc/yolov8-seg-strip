@@ -197,7 +197,9 @@ class SegmentationValidator(DetectionValidator):
         return matches, iou_np
 
     @staticmethod
-    def _mask_dice(pred_masks: torch.Tensor, gt_masks: torch.Tensor, matches: np.ndarray, eps: float = 1e-7) -> np.ndarray:
+    def _mask_dice(
+        pred_masks: torch.Tensor, gt_masks: torch.Tensor, matches: np.ndarray, eps: float = 1e-7
+    ) -> np.ndarray:
         """Compute Dice scores for matched masks."""
         if matches.shape[0] == 0:
             return np.zeros((0,), dtype=np.float32)
